@@ -1,0 +1,144 @@
+﻿# ============================================================
+# Longshot 中文化补丁 · 自定义名词翻译
+# ============================================================
+#
+# 用法：
+#   1. 用记事本打开本文件，把等号右边改成你想要的译名
+#   2. 保存，双击「应用自定义翻译.bat」
+#   3. 进入游戏按 Insert 打开菜单即可看到（已打开的菜单重开一次）
+#
+# 说明：
+#   - 每行格式：英文原名 = 中文译名（英文不要改，改了会找不到对应条目）
+#   - 等号右边留空 = 这一项保持当前的样子不变
+#   - 可以随便加空格、改长度，中英文都行（一条最多约 200 字节）
+#   - 修改会直接写进 bin\longshot_vk.dll，原文件会自动备份
+#   - 想恢复原样：把左边英文对应的右边改回下面的默认译名即可
+#
+
+# ---------- 物品栏道具（物品编辑器里的名字） ----------
+Equipment = 装备
+Items = 道具
+Masks = 面具
+Upgrades = 升级
+Quest = 任务
+Kokiri Sword = 科吉里剑
+Master Sword = 大师剑
+Giant's Knife = 巨人小刀
+Biggoron's Sword = 比格哥隆之剑
+Deku Shield = 德库盾
+Hylian Shield = 海利亚盾
+Mirror Shield = 镜盾
+Goron Tunic = 哥隆服
+Zora Tunic = 佐拉服
+Iron Boots = 铁靴
+Hover Boots = 悬浮靴
+Deku Sticks = 德库树枝
+Deku Nuts = 德库坚果
+Bombs = 炸弹
+Bombchus = 炸弹鼠
+Fairy Slingshot = 妖精弹弓
+Deku Seeds = 德库种子
+Fairy Bow = 妖精弓
+Arrows = 箭
+Fire Arrow = 火焰箭
+Ice Arrow = 冰箭
+Light Arrow = 光箭
+Din's Fire = 迪恩之火
+Farore's Wind = 法隆之风
+Nayru's Love = 娜茹之爱
+Fairy Ocarina = 妖精陶笛
+Ocarina of Time = 时之陶笛
+Hookshot = 钩索
+Longshot = 长钩索
+Boomerang = 回旋镖
+Lens of Truth = 真实之镜
+Magic Beans = 魔法豆
+Megaton Hammer = 百万吨锤
+Empty Bottle = 空瓶
+Zelda's Letter = 塞尔达的信
+Keaton Mask = 基顿面具
+Skull Mask = 骷髅面具
+Spooky Mask = 幽灵面具
+Bunny Hood = 兔耳兜帽
+Goron Mask = 哥隆面具
+Zora Mask = 佐拉面具
+Gerudo Mask = 格鲁德面具
+Mask of Truth = 真实面具
+Goron's Bracelet = 哥隆手镯
+Silver Gauntlets = 银色护手
+Golden Gauntlets = 金色护手
+Silver Scale = 银色鳞片
+Golden Scale = 金色鳞片
+Bomb Bag = 炸弹袋
+Big Bomb Bag = 大炸弹袋
+Biggest Bomb Bag = 特大炸弹袋
+Quiver = 箭袋
+Big Quiver = 大箭袋
+Biggest Quiver = 特大箭袋
+Bullet Bag = 弹丸袋
+Big Bullet Bag = 大弹丸袋
+Biggest Bullet Bag = 特大弹丸袋
+Adult's Wallet = 成人钱袋
+Giant's Wallet = 巨人钱袋
+Magic Meter = 魔力槽
+Double Magic = 双重魔力
+Double Defense = 双重防御
+Kokiri's Emerald = 科吉里翡翠
+Goron's Ruby = 哥隆红宝石
+Zora's Sapphire = 佐拉蓝宝石
+Forest Medallion = 森林徽章
+Fire Medallion = 火焰徽章
+Water Medallion = 水之徽章
+Shadow Medallion = 暗影徽章
+Spirit Medallion = 灵魂徽章
+Light Medallion = 光之徽章
+Zelda's Lullaby = 塞尔达摇篮曲
+Epona's Song = 艾波娜之歌
+Saria's Song = 萨莉亚之歌
+Sun's Song = 太阳之歌
+Song of Time = 时之歌
+Song of Storms = 风暴之歌
+Minuet of Forest = 森林小步舞曲
+Bolero of Fire = 火焰波莱罗
+Serenade of Water = 水之小夜曲
+Nocturne of Shadow = 暗影夜曲
+Requiem of Spirit = 灵魂安魂曲
+Prelude of Light = 光之前奏曲
+Stone of Agony = 痛苦之石
+Gerudo's Card = 格鲁德通行证
+Gold Skulltula Tokens = 金色骷髅蛛徽记
+
+# ---------- 传送地点（调试 → 传送） ----------
+Overworld = 野外
+Dungeons = 迷宫
+Kokiri Forest = 科吉里森林
+Hyrule Field = 海拉鲁平原
+Kakariko Village = 卡卡利科村
+Market = 集市
+Hyrule Castle = 海拉鲁城堡
+Lost Woods = 迷失森林
+Sacred Forest Meadow = 森林圣地
+Lake Hylia = 海利亚湖
+Graveyard = 墓地
+Death Mountain Trail = 死亡之山山路
+Death Mountain Crater = 死亡之山火山口
+Goron City = 哥隆城
+Zora's River = 佐拉河
+Zora's Domain = 佐拉领地
+Zora's Fountain = 佐拉喷泉
+Gerudo Valley = 格鲁德峡谷
+Gerudo Fortress = 格鲁德要塞
+Haunted Wasteland = 幽灵荒原
+Desert Colossus = 沙漠巨像
+Inside the Deku Tree = 德库树内部
+Dodongo's Cavern = 多东哥洞窟
+Jabu-Jabu's Belly = 贾布贾布体内
+Forest Temple = 森之神殿
+Fire Temple = 火之神殿
+Water Temple = 水之神殿
+Shadow Temple = 影之神殿
+Spirit Temple = 魂之神殿
+Bottom of the Well = 井底
+Ice Cavern = 冰之洞窟
+Gerudo Training Ground = 格鲁德训练场
+Ganon's Castle = 加农城堡
