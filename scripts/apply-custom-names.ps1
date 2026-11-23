@@ -1,11 +1,15 @@
-﻿# 应用自定义名词翻译：把 自定义翻译.txt 的译名写进 bin\longshot_vk.dll
-# 做法：给 DLL 追加一个新的 PE 节（.zhcn）存放译文，再把语言表里对应条目的指针指向它（秒级，无需重新编译）
-param([string]$GameFolder, [string]$ListFile)
+﻿# 把译名写进游戏自己的 bin\longshot_vk.dll（不改代码段，只追加一个 .zhcn 节放译文，再把语言表里的指针指过去）
+# 关键：改的是“你这台电脑上那份 DLL”本身，所以游戏版本/构建不会不匹配。
+param([string]$GameFolder, [string]$ListFile, [switch]$Quiet)
 $ErrorActionPreference = 'Stop'
 
-function Say($m) { Write-Host $m }
+function Say($m) { if (-not $Quiet) { Write-Host $m } }
 function Warn($m) { Write-Host $m -ForegroundColor Yellow }
-function Fail($m) { Write-Host $m -ForegroundColor Red; Read-Host '按回车退出' | Out-Null; exit 1 }
+function Fail($m) {
+    Write-Host $m -ForegroundColor Red
+    if ($Quiet) { throw $m }
+    Read-Host '按回车退出' | Out-Null; exit 1
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $scriptDir
@@ -29,12 +33,16 @@ if (-not $GameFolder) {
         } catch {}
     }
 }
-if (-not $GameFolder -and (Test-Path -LiteralPath 'C:\Games\Longshot\stable\v3.1.1\bin\longshot.exe')) { $GameFolder = 'C:\Games\Longshot\stable\v3.1.1' }
+if (-not $GameFolder) {
+    foreach ($c in @('C:\Games\Longshot\stable\v3.1.1', 'C:\Game\LongShot\stable\v3.1.1')) {
+        if (Test-Path -LiteralPath (Join-Path $c 'bin\longshot.exe')) { $GameFolder = $c; break }
+    }
+}
 if (-not $GameFolder) { $GameFolder = (Read-Host '请粘贴游戏文件夹路径（包含 bin\longshot.exe 的那层）').Trim('"', ' ') }
 $dll = Join-Path $GameFolder 'bin\longshot_vk.dll'
 if (-not (Test-Path -LiteralPath $dll)) { Fail "找不到 $dll" }
 $running = Get-Process -Name longshot -ErrorAction SilentlyContinue
-if ($running) { Warn '游戏正在运行，请先退出游戏。'; if ((Read-Host '继续？(y/N)').Trim().ToLower() -ne 'y') { exit 1 } }
+if ($running) { Warn '游戏正在运行，请先退出游戏。'; if (-not $Quiet -and (Read-Host '继续？(y/N)').Trim().ToLower() -ne 'y') { exit 1 } }
 
 # ---------- 解析 PE ----------
 $bytes = [System.IO.File]::ReadAllBytes($dll)
@@ -109,7 +117,7 @@ function FindTable([string]$code) {
                     if ($eo -ge 0 -and ($eo + 16 * $count) -le $bytes.Length) {
                         $en = ReadCString ([uint32]([BitConverter]::ToUInt64($bytes, $eo) - $imgBase))
                         if ($en -and $en.Length -ge 2 -and $en -match '^[\x20-\x7e]+$') {
-                            return [pscustomobject]@{ Code = $code; EntriesRva = [uint32]($entriesPtr - $imgBase); Count = [int]$count }
+                            return [pscustomobject]@{ Code = $code; EntriesRva = [uint32]($entriesPtr - $imgBase); Count = [int]$count; EntriesOff = [int]$eo }
                         }
                     }
                 }
@@ -124,7 +132,7 @@ foreach ($code in @('zh-Hans', 'zh-Hant')) {
     $t = FindTable $code
     if ($t) { $tables += $t; Say "找到 $code 表：$($t.Count) 条" } else { Warn "没有找到 $code 表" }
 }
-if ($tables.Count -eq 0) { Fail '这个 DLL 里没有中文翻译表——请先安装汉化补丁（安装游戏汉化.bat）。' }
+if ($tables.Count -eq 0) { Fail '这个 DLL 里没有中文语言表——它可能不是 Longshot v3.1.1 的 bin\longshot_vk.dll（或者版本不对）。' }
 
 # ---------- 读自定义翻译 ----------
 $rawText = [System.IO.File]::ReadAllText($ListFile, [System.Text.Encoding]::UTF8)
@@ -139,7 +147,7 @@ foreach ($line in ($rawText -split "`r?`n")) {
     if ($k -ne '' -and $v -ne '') { $items += [pscustomobject]@{ Key = $k; Value = $v } }
 }
 Say "自定义条目：$($items.Count) 条"
-if ($items.Count -eq 0) { Say '没有要修改的内容。'; Read-Host '按回车退出' | Out-Null; exit 0 }
+if ($items.Count -eq 0) { Say '没有要修改的内容。'; if (-not $Quiet) { Read-Host '按回车退出' | Out-Null }; exit 0 }
 
 # ---------- 准备 .zhcn 节 ----------
 $limit = 0x4000
@@ -148,6 +156,19 @@ if ($existing) {
     $secVA = $existing.VA; $secRPtr = $existing.RPtr; $secRSize = $existing.RSize
     Say "复用已有 .zhcn 节（$secRSize 字节）"
     [Array]::Clear($bytes, $secRPtr, $secRSize)
+    # 上次补丁留下的指针、而这次的清单里没有的条目：把文本指针改回英文原文，避免变成空白
+    $lo = [uint64]($imgBase + $secVA)
+    $hi = [uint64]($imgBase + $secVA + $secRSize)
+    foreach ($t in $tables) {
+        for ($n = 0; $n -lt $t.Count; $n++) {
+            $slot = $t.EntriesOff + $n * 16
+            $zhPtr = [BitConverter]::ToUInt64($bytes, $slot + 8)
+            if ($zhPtr -ge $lo -and $zhPtr -lt $hi) {
+                $enPtr = [BitConverter]::ToUInt64($bytes, $slot)
+                if ($enPtr -gt $imgBase) { [BitConverter]::GetBytes([uint64]$enPtr).CopyTo($bytes, $slot + 8) }
+            }
+        }
+    }
 } else {
     $hdrEnd = $secStart + 40 * $numSec
     $firstRaw = ($secs | Sort-Object RPtr | Select-Object -First 1).RPtr
@@ -177,6 +198,12 @@ if ($existing) {
     $numSec = $numSec + 1
     $secs = Get-Sections
     Say "已追加 .zhcn 节：VA 0x$('{0:X}' -f $secVA)  容量 $secRSize 字节"
+    # 节表变了，重新算语言表里各条目的文件偏移
+    $tables = @()
+    foreach ($code in @('zh-Hans', 'zh-Hant')) {
+        $t = FindTable $code
+        if ($t) { $tables += $t }
+    }
 }
 
 # ---------- 写入译文 ----------
@@ -197,7 +224,7 @@ foreach ($it in $items) {
     $newPtr = $map[$it.Value]
     $found = $false
     foreach ($t in $tables) {
-        $eo = RvaToOff $t.EntriesRva
+        $eo = $t.EntriesOff
         for ($n = 0; $n -lt $t.Count; $n++) {
             $slot = $eo + $n * 16
             $enPtr = [BitConverter]::ToUInt64($bytes, $slot)
@@ -214,9 +241,50 @@ foreach ($it in $items) {
     if ($found) { $applied++ } else { $unknown += $it.Key }
 }
 
+# ---------- 第二遍：直接改写 DLL 里硬编码的英文原名 ----------
+# 有些构建（旧版 / 自己编译的）里道具名根本不在这张翻译表里，而是菜单直接显示的字面量。
+# 这种地方没有“指针”可换，只能就地覆盖：中文的 UTF-8 字节数必须不超过英文原名的字节数。
+$literalDone = @()
+$literalTooLong = @()
+$unknownLeft = @()
+if ($unknown.Count -gt 0) {
+    $latinAll = $latin.GetString($bytes)   # 1 字节 = 1 字符，字符串下标就是文件偏移
+    $tableRanges = @()
+    foreach ($t in $tables) { $tableRanges += , @($t.EntriesOff, ($t.EntriesOff + 16 * $t.Count)) }
+    foreach ($key in $unknown) {
+        $it = $items | Where-Object { $_.Key -eq $key } | Select-Object -First 1
+        if (-not $it) { continue }
+        $vb = [System.Text.Encoding]::UTF8.GetBytes($it.Value)
+        $needleLen = $key.Length
+        if ($vb.Length -gt $needleLen) { $literalTooLong += ("{0} = {1}（原名 {2} 字节，中文 {3} 字节）" -f $key, $it.Value, $needleLen, $vb.Length); continue }
+        $pos = 0
+        $hits = 0
+        while (($pos = $latinAll.IndexOf($key, $pos, [System.StringComparison]::Ordinal)) -ge 0) {
+            $endp = $pos + $needleLen
+            $inTable = $false
+            foreach ($r in $tableRanges) { if ($pos -ge $r[0] -and $pos -lt $r[1]) { $inTable = $true; break } }
+            if (-not $inTable -and $endp -lt $bytes.Length -and $bytes[$endp] -eq 0 -and ($pos -eq 0 -or $bytes[$pos - 1] -eq 0)) {
+                [Array]::Copy($vb, 0, $bytes, $pos, $vb.Length)
+                $bytes[$pos + $vb.Length] = 0
+                $hits++
+            }
+            $pos++
+        }
+        if ($hits -gt 0) { $literalDone += ("{0} → {1}（{2} 处）" -f $key, $it.Value, $hits) } else { $unknownLeft += $key }
+    }
+}
+
 # ---------- 备份 + 写盘 ----------
 $backup = $dll + '.zhCN-backup'
-if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $dll -Destination $backup -Force; Say "已备份原文件：$backup" }
+if (-not (Test-Path -LiteralPath $backup)) {
+    if ($existing) {
+        Warn '这个 DLL 已经带着补丁、却没有原版备份：现在无法自动生成原版备份。'
+        Warn '建议：先用启动器的「重新构建」把游戏恢复成官方文件，再重新运行安装。'
+    } else {
+        Copy-Item -LiteralPath $dll -Destination $backup -Force
+        Say "已备份原文件：$backup"
+    }
+}
 $tmp = $dll + '.new'
 [System.IO.File]::WriteAllBytes($tmp, $bytes)
 Move-Item -LiteralPath $tmp -Destination $dll -Force
@@ -224,6 +292,8 @@ Move-Item -LiteralPath $tmp -Destination $dll -Force
 # ---------- 校验 ----------
 $chk = [System.IO.File]::ReadAllBytes($dll)
 $bad = 0
+$cur = @{}
+foreach ($it in $items) { if (-not $cur.ContainsKey($it.Value)) { $cur[$it.Value] = 0 } }
 foreach ($it in $items) {
     if (-not $map.ContainsKey($it.Value)) { continue }
     $rva = [uint32]($map[$it.Value] - $imgBase)
@@ -235,13 +305,22 @@ foreach ($it in $items) {
     if ($s2 -ne $it.Value) { $bad++ }
 }
 
-Say ''
-Say "✅ 完成：修改了 $applied 条译名（DLL 新增 .zhcn 节存放译文）。"
-if ($bad -gt 0) { Warn "校验有 $bad 条不一致，请把 DLL 从 .zhCN-backup 还原后重试。" }
-if ($unknown.Count -gt 0) {
-    Warn "以下 $($unknown.Count) 条在 DLL 里找不到对应英文名（英文那侧是不是改了？）："
-    $unknown | Select-Object -First 20 | ForEach-Object { Warn "   $_" }
+if (-not $Quiet) {
+    Say ''
+    Say "✅ 完成：翻译表里替换 $applied 条；DLL 里就地改写 $($literalDone.Count) 条。"
+    Say '   游戏里重开一次 Insert 菜单即可看到；把译名改回原样再运行即可恢复。'
 }
-Say '   游戏里重开一次 Insert 菜单即可看到；把译名改回原样再运行即可恢复。'
-Say ''
-Read-Host '按回车退出' | Out-Null
+if ($bad -gt 0) { Warn "校验有 $bad 条不一致，请用 .zhCN-backup 还原后重试。" }
+if ($literalTooLong.Count -gt 0) {
+    Warn "以下 $($literalTooLong.Count) 条中文比英文原名长，DLL 原位放不下（请把译名缩短后重跑）："
+    $literalTooLong | Select-Object -First 20 | ForEach-Object { Warn "   $_" }
+}
+if ($literalDone.Count -gt 0 -and -not $Quiet) {
+    Say "就地改写（旧构建里硬编码的名字）："
+    $literalDone | Select-Object -First 20 | ForEach-Object { Say "   $_" }
+}
+if ($unknownLeft.Count -gt 0) {
+    Warn "以下 $($unknownLeft.Count) 条在这份 DLL 里既不在翻译表里、也找不到同名的硬编码字符串："
+    $unknownLeft | Select-Object -First 20 | ForEach-Object { Warn "   $_" }
+}
+if (-not $Quiet) { Say ''; Read-Host '按回车退出' | Out-Null }
