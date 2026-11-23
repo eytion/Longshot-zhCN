@@ -243,34 +243,88 @@ foreach ($it in $items) {
 
 # ---------- 第二遍：直接改写 DLL 里硬编码的英文原名 ----------
 # 有些构建（旧版 / 自己编译的）里道具名根本不在这张翻译表里，而是菜单直接显示的字面量。
-# 这种地方没有“指针”可换，只能就地覆盖：中文的 UTF-8 字节数必须不超过英文原名的字节数。
+# 做法一：中文的 UTF-8 字节数不超过英文原名 → 就地覆盖（最安全）。
+# 做法二：原名太短放不下 → 若有指针引用这段字符串，就把指针改指到 .zhcn 里的中文（长度不限）。
 $literalDone = @()
+$ptrDone = @()
 $literalTooLong = @()
 $unknownLeft = @()
 if ($unknown.Count -gt 0) {
     $latinAll = $latin.GetString($bytes)   # 1 字节 = 1 字符，字符串下标就是文件偏移
     $tableRanges = @()
     foreach ($t in $tables) { $tableRanges += , @($t.EntriesOff, ($t.EntriesOff + 16 * $t.Count)) }
+
+    # .reloc 覆盖的地址（只有这些槽位加载时会被修正，改指针才安全）
+    $relocSet = @{}
+    $isPe32Plus = ([BitConverter]::ToUInt16($bytes, $optOff) -eq 0x20B)
+    if ($isPe32Plus) {
+        $dirBase = $optOff + 112
+        $relocRva = [BitConverter]::ToUInt32($bytes, $dirBase + 5 * 8)
+        $relocSize = [BitConverter]::ToUInt32($bytes, $dirBase + 5 * 8 + 4)
+        $ro = RvaToOff $relocRva
+        if ($ro -ge 0 -and $relocSize -gt 0) {
+            $p = $ro
+            $endRel = $ro + $relocSize
+            while ($p -lt $endRel -and ($p + 8) -le $bytes.Length) {
+                $page = [BitConverter]::ToUInt32($bytes, $p)
+                $blk = [BitConverter]::ToUInt32($bytes, $p + 4)
+                if ($blk -le 0) { break }
+                $q = $p + 8
+                while ($q -lt ($p + $blk) -and ($q + 2) -le $bytes.Length) {
+                    $e = [BitConverter]::ToUInt16($bytes, $q)
+                    if (($e -shr 12) -eq 10) { $relocSet[($page + ($e -band 0xFFF))] = 1 }
+                    $q += 2
+                }
+                $p += $blk
+            }
+        }
+    }
+
     foreach ($key in $unknown) {
         $it = $items | Where-Object { $_.Key -eq $key } | Select-Object -First 1
         if (-not $it) { continue }
         $vb = [System.Text.Encoding]::UTF8.GetBytes($it.Value)
         $needleLen = $key.Length
-        if ($vb.Length -gt $needleLen) { $literalTooLong += ("{0} = {1}（原名 {2} 字节，中文 {3} 字节）" -f $key, $it.Value, $needleLen, $vb.Length); continue }
         $pos = 0
-        $hits = 0
+        $shortHits = 0
+        $longHits = 0
+        $candidates = @()
         while (($pos = $latinAll.IndexOf($key, $pos, [System.StringComparison]::Ordinal)) -ge 0) {
             $endp = $pos + $needleLen
             $inTable = $false
             foreach ($r in $tableRanges) { if ($pos -ge $r[0] -and $pos -lt $r[1]) { $inTable = $true; break } }
             if (-not $inTable -and $endp -lt $bytes.Length -and $bytes[$endp] -eq 0 -and ($pos -eq 0 -or $bytes[$pos - 1] -eq 0)) {
-                [Array]::Copy($vb, 0, $bytes, $pos, $vb.Length)
-                $bytes[$pos + $vb.Length] = 0
-                $hits++
+                if ($vb.Length -le $needleLen) {
+                    [Array]::Copy($vb, 0, $bytes, $pos, $vb.Length)
+                    $bytes[$pos + $vb.Length] = 0
+                    $shortHits++
+                } else {
+                    $r = OffToRva $pos
+                    if ($r -gt 0) { $candidates += [uint64]($imgBase + $r) }
+                }
             }
             $pos++
         }
-        if ($hits -gt 0) { $literalDone += ("{0} → {1}（{2} 处）" -f $key, $it.Value, $hits) } else { $unknownLeft += $key }
+        if ($shortHits -gt 0) { $literalDone += ("{0} → {1}（就地改 {2} 处）" -f $key, $it.Value, $shortHits); continue }
+        if ($candidates.Count -gt 0 -and $map.ContainsKey($it.Value)) {
+            $newPtr2 = $map[$it.Value]
+            foreach ($cand in $candidates) {
+                $pat = $latin.GetString([BitConverter]::GetBytes($cand))
+                $j = 0
+                while (($j = $latinAll.IndexOf($pat, $j, [System.StringComparison]::Ordinal)) -ge 0) {
+                    if (($j % 8) -eq 0) {
+                        $slotRva = OffToRva $j
+                        if ($slotRva -gt 0 -and $relocSet.ContainsKey($slotRva)) {
+                            [BitConverter]::GetBytes([uint64]$newPtr2).CopyTo($bytes, $j)
+                            $longHits++
+                        }
+                    }
+                    $j++
+                }
+            }
+        }
+        if ($longHits -gt 0) { $ptrDone += ("{0} → {1}（改指针 {2} 处）" -f $key, $it.Value, $longHits) }
+        else { $literalTooLong += ("{0} = {1}（原名 {2} 字节，中文 {3} 字节）" -f $key, $it.Value, $needleLen, $vb.Length) }
     }
 }
 
@@ -307,20 +361,20 @@ foreach ($it in $items) {
 
 if (-not $Quiet) {
     Say ''
-    Say "✅ 完成：翻译表里替换 $applied 条；DLL 里就地改写 $($literalDone.Count) 条。"
+    Say "✅ 完成：翻译表里替换 $applied 条；就地改写 $($literalDone.Count) 条；改指针 $($ptrDone.Count) 条。"
     Say '   游戏里重开一次 Insert 菜单即可看到；把译名改回原样再运行即可恢复。'
 }
 if ($bad -gt 0) { Warn "校验有 $bad 条不一致，请用 .zhCN-backup 还原后重试。" }
-if ($literalTooLong.Count -gt 0) {
-    Warn "以下 $($literalTooLong.Count) 条中文比英文原名长，DLL 原位放不下（请把译名缩短后重跑）："
-    $literalTooLong | Select-Object -First 20 | ForEach-Object { Warn "   $_" }
-}
 if ($literalDone.Count -gt 0 -and -not $Quiet) {
-    Say "就地改写（旧构建里硬编码的名字）："
-    $literalDone | Select-Object -First 20 | ForEach-Object { Say "   $_" }
+    Say "就地改写（旧构建里硬编码的英文名）："
+    $literalDone | Select-Object -First 12 | ForEach-Object { Say "   $_" }
 }
-if ($unknownLeft.Count -gt 0) {
-    Warn "以下 $($unknownLeft.Count) 条在这份 DLL 里既不在翻译表里、也找不到同名的硬编码字符串："
-    $unknownLeft | Select-Object -First 20 | ForEach-Object { Warn "   $_" }
+if ($ptrDone.Count -gt 0 -and -not $Quiet) {
+    Say "改指针（同名英文串被指针引用，长度不受限）："
+    $ptrDone | Select-Object -First 12 | ForEach-Object { Say "   $_" }
+}
+if ($literalTooLong.Count -gt 0) {
+    Warn "以下 $($literalTooLong.Count) 条既放不进原来的位置、也没有可改的指针（请把译名改短后重跑）："
+    $literalTooLong | Select-Object -First 20 | ForEach-Object { Warn "   $_" }
 }
 if (-not $Quiet) { Say ''; Read-Host '按回车退出' | Out-Null }
